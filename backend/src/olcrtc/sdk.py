@@ -9,6 +9,20 @@ import docker_client
 
 class OlcRTC:
     @staticmethod
+    def parse_name(name: str) -> tuple[str, str] | None:
+        """Split "olcwave-<config_tag>-<owner>" into (config_tag, owner).
+
+        maxsplit=2: a Remnawave shortUuid contains hyphens, while
+        config_tag never does (stripped on save).
+        """
+        parts = name.split("-", 2)
+
+        if len(parts) != 3 or parts[0] != "olcwave":
+            return None
+
+        return parts[1], parts[2]
+
+    @staticmethod
     async def build(rebuild: bool = False):
         docker = docker_client.docker
         if not rebuild:

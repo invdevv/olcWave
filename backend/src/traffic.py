@@ -12,16 +12,6 @@ class TrafficManager:
     _last_totals: dict[str, int] = {}
 
     @staticmethod
-    def _owner_of(name: str) -> str | None:
-        # maxsplit=2: Remnawave shortUuid contains hyphens
-        parts = name.split("-", 2)
-
-        if len(parts) == 3 and parts[0] == "olcwave":
-            return parts[2]
-
-        return None
-
-    @staticmethod
     async def _collect_deltas() -> dict[str, int]:
         deltas: dict[str, int] = {}
         seen: set[str] = set()
@@ -35,10 +25,12 @@ class TrafficManager:
             if not await Containers.is_panel_container(cont):
                 continue
 
-            owner = TrafficManager._owner_of(name)
+            parsed = OlcRTC.parse_name(name)
 
-            if owner is None:
+            if parsed is None:
                 continue
+
+            owner = parsed[1]
 
             seen.add(name)
 
@@ -81,7 +73,9 @@ class TrafficManager:
             if not await Containers.is_panel_container(cont):
                 continue
 
-            if TrafficManager._owner_of(name) != short_uuid:
+            parsed = OlcRTC.parse_name(name)
+
+            if parsed is None or parsed[1] != short_uuid:
                 continue
 
             try:

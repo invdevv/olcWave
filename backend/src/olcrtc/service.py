@@ -18,23 +18,20 @@ class Containers:
         info = await cont.show()
 
         name = info["Name"].lstrip("/")
-        # maxsplit=2: Remnawave shortUuid contains hyphens
-        parts = name.split("-", 2)
 
-        return len(parts) == 3 and parts[0] == "olcwave"
+        return OlcRTC.parse_name(name) is not None
 
     @staticmethod
     async def to_schema(cont: DockerContainer) -> ContainerSchema | None:
         info = await cont.show()
 
         name = info["Name"].lstrip("/")
-        # maxsplit=2: Remnawave shortUuid contains hyphens
-        parts = name.split("-", 2)
+        parsed = OlcRTC.parse_name(name)
 
-        if len(parts) != 3:
+        if parsed is None:
             return None
 
-        _, config_tag, user_id = parts
+        config_tag, user_id = parsed
 
         return ContainerSchema(
             id=info["Id"][:12],

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from auth.dependencies import get_current_admin
 from xraycore.sdk import XrayCore
+from olcrtc.sdk import OlcRTC
 from olcrtc.schemas import ContainerSchema, ContainerConfigSchema, ContainerLogsSchema, ContainerStatsSchema
 from olcrtc.service import Containers
 from users.service import Users
@@ -15,11 +16,10 @@ async def get_all(_admin: dict = Depends(get_current_admin)) -> list[ContainerSc
 @router.post("/run")
 async def run(name: str, _admin: dict = Depends(get_current_admin)):
     # Block starting a container when its owner has exceeded their traffic limit.
-    # maxsplit=2: Remnawave shortUuid contains hyphens
-    parts = name.split("-", 2)
-    if len(parts) == 3 and parts[0] == "olcwave":
+    parsed = OlcRTC.parse_name(name)
+    if parsed is not None:
         try:
-            traffic = await Users.get_traffic(parts[2])
+            traffic = await Users.get_traffic(parsed[1])
         except Exception:
             traffic = None
         if traffic and traffic.exceeded:

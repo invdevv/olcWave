@@ -13,7 +13,8 @@ class TrafficManager:
 
     @staticmethod
     def _owner_of(name: str) -> str | None:
-        parts = name.split("-")
+        # maxsplit=2: Remnawave shortUuid contains hyphens
+        parts = name.split("-", 2)
 
         if len(parts) == 3 and parts[0] == "olcwave":
             return parts[2]

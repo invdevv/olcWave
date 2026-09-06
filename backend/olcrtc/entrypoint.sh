@@ -33,18 +33,22 @@ fi
 /app/proxy &
 proxy_pid=$!
 
-cleanup() {
-  kill "$proxy_pid" 2>/dev/null || true
-}
-trap cleanup INT TERM EXIT
-
 /app/olcrtc /tmp/olcwave/config.yaml &
 olcrtc_pid=$!
 
-wait "$olcrtc_pid"
-status=$?
+# On shutdown (docker stop -> SIGTERM) forward it to olcrtc FIRST so it can
+# gracefully leave the Telemost room and send each connected client a "control
+# closed by peer" close -> the client fails over to its warm standby INSTANTLY
+# instead of hammering the now-dead room. The proxy is stopped on exit.
+# (Previously the trap killed only the proxy, so olcrtc never got the signal and
+# never sent the close, and the client fell back to the slow liveness path.)
+trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
+trap 'kill -TERM "$olcrtc_pid" 2>/dev/null || true' INT TERM
 
-cleanup
-wait "$proxy_pid" 2>/dev/null || true
+# A trapped signal makes `wait` return while olcrtc is still shutting down; keep
+# waiting until it has actually exited so its graceful close gets sent.
+while kill -0 "$olcrtc_pid" 2>/dev/null; do
+  wait "$olcrtc_pid" || true
+done
 
-exit "$status"
+exit 0

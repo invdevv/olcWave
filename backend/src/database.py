@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -42,3 +43,8 @@ async def create_tables(reload: bool = False) -> None:
         if reload:
             await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        # Lightweight, idempotent migrations (olcWave has no Alembic).
+        # create_all never ADDs columns to an existing table, so do it here.
+        await conn.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profiles JSON")
+        )

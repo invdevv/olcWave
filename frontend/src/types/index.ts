@@ -15,6 +15,7 @@ export interface User {
   expires_at: string
   traffic_limit_bytes: number
   traffic_used_bytes: number
+  profiles?: string[] | null
 }
 
 export interface SyncResult {

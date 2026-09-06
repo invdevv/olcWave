@@ -11,6 +11,8 @@ class UserSchema(BaseModel):
     expires_at: datetime = Field(default = datetime(year=1971, month=1, day=1, hour=5, tzinfo=timezone.utc))
     traffic_limit_bytes: int = Field(default_factory=lambda: SettingsService.get().default_traffic_limit)
     traffic_used_bytes: int = Field(default=0)
+    # null = all profiles (legacy/unset); [] = none; [tags...] = exactly those
+    profiles: list[str] | None = Field(default=None)
 
     model_config = ConfigDict(from_attributes=True)
 

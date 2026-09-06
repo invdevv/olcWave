@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { profilesApi } from '../api/profiles'
 import type { Profile, YamlValidationResult } from '../types'
@@ -10,6 +10,7 @@ import { useLanguage } from '../i18n/useLanguage'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Modal from '../components/ui/Modal'
+import { vaultApi } from '../api/vault'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { Card, ErrorState, EmptyState, Skeleton } from '../components/ui/Misc'
 import { load, dump } from 'js-yaml'
@@ -260,19 +261,161 @@ function RoomAutogenerationModal({ open, onClose, config, onConfigUpdate }: {
     return undefined
   }, [config])
 
-  const [sessionId, setSessionId] = useState('')
+  const [tokens, setTokens] = useState<{ value: string; account?: string }[]>([])
+  const [tokenInput, setTokenInput] = useState('')
   const [wbJson, setWbJson] = useState('')
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [statusMsg, setStatusMsg] = useState('')
 
+  // Self-refreshing (vault) login flow
+  const [vncOpen, setVncOpen] = useState(false)
+  const [vncBusy, setVncBusy] = useState(false)
+  const [vncErr, setVncErr] = useState('')
+  // Auto-detect: the panel polls /login/status and, once the Session_id has been
+  // the SAME value for 3 consecutive reads (and we've left the passport login
+  // pages), commits automatically. 3 identical reads is the kosher signal - the
+  // recorded login showed Session_id appears only AFTER auth completes and never
+  // changes afterwards, so a stable value == the final, real token. No room is
+  // created; this is a read-only check.
+  const [autoPhase, setAutoPhase] = useState<'waiting' | 'stabilizing' | 'committing'>('waiting')
+  const [stableCount, setStableCount] = useState(0)
+  const stableRef = useRef<{ fp: string | null; count: number }>({ fp: null, count: 0 })
+  const committingRef = useRef(false)
+  const STABLE_TARGET = 3
+
   useEffect(() => {
     if (open) {
-      setSessionId('')
+      // Preload tokens already in the profile: plain auth.token/auth.tokens
+      // strings, plus managed {token, account} entries (self-refreshing).
+      const existing: { value: string; account?: string }[] = []
+      try {
+        const doc = load(config) as Record<string, unknown> | undefined
+        const auth = (doc?.auth || {}) as Record<string, unknown>
+        if (typeof auth.token === 'string' && auth.token.trim()) existing.push({ value: auth.token.trim() })
+        if (Array.isArray(auth.tokens)) {
+          for (const x of auth.tokens) {
+            if (typeof x === 'string' && x.trim()) existing.push({ value: x.trim() })
+            else if (x && typeof x === 'object') {
+              const o = x as Record<string, unknown>
+              if (typeof o.token === 'string' && o.token.trim()) {
+                existing.push({ value: o.token.trim(), account: typeof o.account === 'string' ? o.account : undefined })
+              }
+            }
+          }
+        }
+      } catch {}
+      const seen = new Set<string>()
+      setTokens(existing.filter((e) => (seen.has(e.value) ? false : (seen.add(e.value), true))))
+      setTokenInput('')
       setWbJson('')
       setStatus('idle')
       setStatusMsg('')
+      setVncOpen(false)
+      setVncBusy(false)
+      setVncErr('')
     }
-  }, [open])
+  }, [open, config])
+
+  const addToken = () => {
+    const v = tokenInput.trim()
+    if (!v) return
+    setTokens((s) => (s.some((x) => x.value === v) ? s : [...s, { value: v }]))
+    setTokenInput('')
+  }
+  const removeToken = (v: string) => setTokens((s) => s.filter((x) => x.value !== v))
+
+  // noVNC builds its ws URL from the SERVER ROOT + `path` (not the page dir), so
+  // we must pass the full path through the panel prefix, else it hits /websockify.
+  const vncBase = import.meta.env.BASE_URL // "/" unless the panel is served under a prefix
+  const vncUrl = `${window.location.origin}${vncBase}vault-vnc/vnc.html?autoconnect=true&resize=scale&path=${vncBase.replace(/^\//, '')}vault-vnc/websockify`
+
+  const startManaged = useCallback(async () => {
+    setVncErr('')
+    setVncBusy(true)
+    try {
+      await vaultApi.loginStart()
+      setVncOpen(true)
+    } catch (e) {
+      setVncErr((e as { response?: { data?: { error?: string } } })?.response?.data?.error || t('vaultStartFailed'))
+    } finally {
+      setVncBusy(false)
+    }
+  }, [t])
+
+  const commitManaged = useCallback(async () => {
+    setVncErr('')
+    setVncBusy(true)
+    try {
+      const res = await vaultApi.loginCommit()
+      const token = res.data.token
+      const account = res.data.account
+      if (!token) {
+        setVncErr(t('notLoggedInYet'))
+        return
+      }
+      setTokens((s) => (s.some((x) => x.value === token) ? s : [...s, { value: token, account }]))
+      setVncOpen(false)
+    } catch (e) {
+      setVncErr((e as { response?: { data?: { error?: string } } })?.response?.data?.error || t('vaultCommitFailed'))
+    } finally {
+      setVncBusy(false)
+    }
+  }, [t])
+
+  const cancelManaged = useCallback(async () => {
+    try { await vaultApi.loginCancel() } catch { /* best effort */ }
+    setVncOpen(false)
+    setVncErr('')
+  }, [])
+
+  // Poll the login state while the noVNC window is open; auto-commit once the
+  // token has been stable (same fingerprint) for STABLE_TARGET reads.
+  useEffect(() => {
+    if (!vncOpen) {
+      stableRef.current = { fp: null, count: 0 }
+      committingRef.current = false
+      setStableCount(0)
+      setAutoPhase('waiting')
+      return
+    }
+    let cancelled = false
+    const poll = async () => {
+      if (committingRef.current) return // a commit attempt is already in flight
+      try {
+        const { data } = await vaultApi.loginStatus()
+        if (cancelled) return
+        const fp = data.sid && data.sidFp ? data.sidFp : null
+        const onPassport = /passport\.yandex/.test(data.url || '')
+        if (fp && !onPassport) {
+          if (stableRef.current.fp === fp) stableRef.current.count += 1
+          else stableRef.current = { fp, count: 1 }
+          setStableCount(stableRef.current.count)
+          if (stableRef.current.count >= STABLE_TARGET) {
+            committingRef.current = true
+            setAutoPhase('committing')
+            try {
+              await commitManaged() // closes the modal (stops this poller) on success
+            } finally {
+              // If commit didn't close the modal (rare failure), allow a retry
+              // after the token re-stabilizes rather than getting stuck.
+              committingRef.current = false
+              stableRef.current = { fp: null, count: 0 }
+              setStableCount(0)
+            }
+            return
+          }
+          setAutoPhase('stabilizing')
+        } else {
+          stableRef.current = { fp: null, count: 0 }
+          setStableCount(0)
+          setAutoPhase('waiting')
+        }
+      } catch { /* transient - keep polling */ }
+    }
+    const id = setInterval(poll, 2000)
+    poll()
+    return () => { cancelled = true; clearInterval(id) }
+  }, [vncOpen, commitManaged])
 
   const handleEnable = useCallback(() => {
     try {
@@ -287,12 +430,22 @@ function RoomAutogenerationModal({ open, onClose, config, onConfigUpdate }: {
       const auth = (root.auth || {}) as Record<string, unknown>
 
       if (provider === 'telemost') {
-        if (!sessionId.trim()) {
+        const pending = tokenInput.trim()
+        const list = [...tokens]
+        if (pending && !list.some((x) => x.value === pending)) list.push({ value: pending })
+        if (list.length === 0) {
           setStatus('error')
-          setStatusMsg('Please enter Session_id')
+          setStatusMsg(t('pleaseEnterSessionId'))
           return
         }
-        auth.token = sessionId.trim()
+        delete auth.token
+        delete auth.tokens
+        // managed entries -> {token, account} (the vault keeps token fresh); plain -> string.
+        const entries: (string | { token: string; account: string })[] = list.map((e) =>
+          e.account ? { token: e.value, account: e.account } : e.value,
+        )
+        if (entries.length === 1 && typeof entries[0] === 'string') auth.token = entries[0]
+        else auth.tokens = entries
       } else if (provider === 'wbstream') {
         if (!wbJson.trim()) {
           setStatus('error')
@@ -313,6 +466,7 @@ function RoomAutogenerationModal({ open, onClose, config, onConfigUpdate }: {
           setStatusMsg(t('accessTokenNotFound'))
           return
         }
+        delete auth.tokens
         auth.token = accessToken
       }
 
@@ -328,11 +482,12 @@ function RoomAutogenerationModal({ open, onClose, config, onConfigUpdate }: {
       setStatus('error')
       setStatusMsg('Failed to process YAML')
     }
-  }, [config, provider, sessionId, wbJson, onConfigUpdate, onClose, t])
+  }, [config, provider, tokens, tokenInput, wbJson, onConfigUpdate, onClose, t])
 
   if (!provider || provider === 'jitsi' || provider === 'none') return null
 
   return (
+    <>
     <Modal open={open} onClose={onClose} title={t('roomAutogenerationTitle')} wide>
       <div className="space-y-4 text-sm text-text-primary">
         {provider === 'telemost' && (
@@ -348,13 +503,50 @@ function RoomAutogenerationModal({ open, onClose, config, onConfigUpdate }: {
             </ol>
             <div>
               <label className="text-xs font-medium text-text-secondary">{t('sessionId')}</label>
-              <input
-                value={sessionId}
-                onChange={(e) => setSessionId(e.target.value)}
-                className="mt-1 w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-text-primary font-mono
-                  focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 transition-all"
-                placeholder="3:1.5.0.1:1:1.1.2:1..."
-              />
+              <div className="mt-1 flex gap-2">
+                <input
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addToken() } }}
+                  className="flex-1 bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-text-primary font-mono
+                    focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 transition-all"
+                  placeholder="3:1.5.0.1:1:1.1.2:1..."
+                />
+                <Button variant="secondary" onClick={addToken}>{t('addTokenButton')}</Button>
+              </div>
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={startManaged}
+                  disabled={vncBusy}
+                  className="text-xs text-accent hover:underline disabled:opacity-50 cursor-pointer"
+                >
+                  {vncBusy && !vncOpen ? t('vaultStarting') : '+ ' + t('addSelfRefreshingToken')}
+                </button>
+                {vncErr && !vncOpen && <p className="text-xs text-danger mt-1">{vncErr}</p>}
+              </div>
+              {tokens.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {tokens.map((tk) => (
+                    <div key={tk.value} className="flex items-center justify-between gap-2 bg-bg-tertiary border border-border rounded-md px-2.5 py-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <code className="text-xs font-mono text-text-secondary truncate">{tk.value.slice(0, 16)}…{tk.value.slice(-6)}</code>
+                        {tk.account && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/15 text-accent shrink-0" title={t('managedTokenHint')}>
+                            {t('managedBadge')}
+                          </span>
+                        )}
+                      </div>
+                      <button onClick={() => removeToken(tk.value)} className="text-text-muted hover:text-danger shrink-0 cursor-pointer" title={t('delete')}>
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <p className="text-xs text-text-muted">
+                    {tokens.length >= 2 ? t('rotationActiveHint') : t('singleTokenHint')}
+                  </p>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -404,6 +596,42 @@ function RoomAutogenerationModal({ open, onClose, config, onConfigUpdate }: {
         </div>
       </div>
     </Modal>
+
+    <Modal open={vncOpen} onClose={cancelManaged} title={t('vaultLoginTitle')} wide>
+      <div className="space-y-3 text-sm text-text-primary">
+        <p className="text-text-secondary">{t('vaultLoginHint')}</p>
+        <iframe
+          src={vncUrl}
+          title="vault-login"
+          className="w-full rounded-md border border-border bg-black"
+          style={{ height: 520 }}
+        />
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
+          <span
+            className={
+              'inline-block w-2 h-2 rounded-full shrink-0 ' +
+              (autoPhase === 'waiting' ? 'bg-text-secondary/40' : 'bg-success animate-pulse')
+            }
+          />
+          <span>
+            {autoPhase === 'waiting' && t('vaultWaitingLogin')}
+            {autoPhase === 'stabilizing' && `${t('vaultConfirming')} (${stableCount}/${STABLE_TARGET})`}
+            {autoPhase === 'committing' && t('vaultAutoClosing')}
+          </span>
+        </div>
+        {vncErr && (
+          <div className="flex items-center gap-2 bg-danger/10 border border-danger/20 rounded-lg px-3 py-2 text-sm text-danger">
+            <ExclamationCircleIcon className="w-4 h-4 shrink-0" />
+            <span>{vncErr}</span>
+          </div>
+        )}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={cancelManaged}>{t('cancel')}</Button>
+          <Button onClick={commitManaged} disabled={vncBusy}>{vncBusy ? t('loggingIn') : t('vaultDone')}</Button>
+        </div>
+      </div>
+    </Modal>
+    </>
   )
 }
 

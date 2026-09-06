@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { usersApi } from '../api/users'
+import { profilesApi } from '../api/profiles'
 import { settingsApi } from '../api/settings'
-import type { User, SyncResult } from '../types'
+import type { User, SyncResult, Profile } from '../types'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import Input from '../components/ui/Input'
@@ -349,6 +350,43 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">{children}</p>
 }
 
+function ProfileSelector({
+  profiles,
+  loading,
+  selected,
+  onToggle,
+}: {
+  profiles: Profile[] | undefined
+  loading: boolean
+  selected: string[]
+  onToggle: (tag: string) => void
+}) {
+  const { t } = useLanguage()
+  if (loading) return <Skeleton className="h-16 rounded-lg" />
+  if (!profiles || profiles.length === 0)
+    return (
+      <div className="bg-bg-tertiary border border-border rounded-lg p-3.5">
+        <p className="text-xs text-text-muted">{t('noProfilesToAssign')}</p>
+      </div>
+    )
+  return (
+    <div className="bg-bg-tertiary border border-border rounded-lg p-3.5 space-y-2 max-h-48 overflow-y-auto">
+      {profiles.map((p) => (
+        <label key={p.tag} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={selected.includes(p.tag)}
+            onChange={() => onToggle(p.tag)}
+            className="accent-accent w-4 h-4 cursor-pointer"
+          />
+          <span className="text-text-primary">{p.name}</span>
+          <code className="text-[11px] font-mono text-text-muted">{p.tag}</code>
+        </label>
+      ))}
+    </div>
+  )
+}
+
 function UserCreateModal({
   open,
   onClose,
@@ -368,6 +406,12 @@ function UserCreateModal({
   const [expiry, setExpiry] = useState('')
   const [limitGb, setLimitGb] = useState('')
   const [unlimited, setUnlimited] = useState(false)
+  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([])
+
+  const { data: allProfiles, isLoading: profilesLoading } = useQuery({
+    queryKey: ['profiles-all'],
+    queryFn: () => profilesApi.getAll().then((r) => r.data),
+  })
 
   useEffect(() => {
     if (open) {
@@ -377,6 +421,14 @@ function UserCreateModal({
       setUnlimited(false)
     }
   }, [open])
+
+  // Default a new user to all existing profiles.
+  useEffect(() => {
+    if (open) setSelectedProfiles((allProfiles ?? []).map((p) => p.tag))
+  }, [open, allProfiles])
+
+  const toggleProfile = (tag: string) =>
+    setSelectedProfiles((s) => (s.includes(tag) ? s.filter((x) => x !== tag) : [...s, tag]))
 
   const errMsg = (err: unknown, fallback: string) =>
     (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || fallback
@@ -390,6 +442,7 @@ function UserCreateModal({
         name: name || null,
         expires_at: new Date(expiry || Date.now() + 365 * 86400000).toISOString(),
         traffic_limit_bytes: bytes,
+        profiles: selectedProfiles,
       })
     },
     onSuccess: () => {
@@ -451,6 +504,17 @@ function UserCreateModal({
           />
         </div>
 
+        <div className="space-y-2.5">
+          <SectionLabel>{t('userProfiles')}</SectionLabel>
+          <p className="text-xs text-text-muted">{t('userProfilesHint')}</p>
+          <ProfileSelector
+            profiles={allProfiles}
+            loading={profilesLoading}
+            selected={selectedProfiles}
+            onToggle={toggleProfile}
+          />
+        </div>
+
         <div className="border-t border-border pt-4 flex items-center justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>{t('cancel')}</Button>
           <Button loading={createMutation.isPending} onClick={() => createMutation.mutate()}>
@@ -485,12 +549,21 @@ function UserEditModal({
   const [unlimited, setUnlimited] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([])
 
   const { data: traffic, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['user-traffic', user?.short_uuid],
     queryFn: () => usersApi.getTraffic(user!.short_uuid).then((r) => r.data),
     enabled: !!user,
   })
+
+  const { data: allProfiles, isLoading: profilesLoading } = useQuery({
+    queryKey: ['profiles-all'],
+    queryFn: () => profilesApi.getAll().then((r) => r.data),
+  })
+
+  const toggleProfile = (tag: string) =>
+    setSelectedProfiles((s) => (s.includes(tag) ? s.filter((x) => x !== tag) : [...s, tag]))
 
   useEffect(() => {
     if (user) {
@@ -500,6 +573,12 @@ function UserEditModal({
     setConfirmReset(false)
     setConfirmDelete(false)
   }, [user])
+
+  // null profiles = all (legacy) -> pre-check everything; a list -> exactly those.
+  useEffect(() => {
+    if (!user) return
+    setSelectedProfiles(user.profiles ?? (allProfiles ?? []).map((p) => p.tag))
+  }, [user, allProfiles])
 
   useEffect(() => {
     if (traffic) {
@@ -524,6 +603,7 @@ function UserEditModal({
         expires_at: new Date(expiry).toISOString(),
         traffic_limit_bytes: bytes,
         traffic_used_bytes: user!.traffic_used_bytes,
+        profiles: selectedProfiles,
       })
     },
     onSuccess: () => {
@@ -645,6 +725,17 @@ function UserEditModal({
             type="datetime-local"
             value={expiry}
             onChange={(e) => setExpiry(e.target.value)}
+          />
+        </div>
+
+        <div className="space-y-2.5">
+          <SectionLabel>{t('userProfiles')}</SectionLabel>
+          <p className="text-xs text-text-muted">{t('userProfilesHint')}</p>
+          <ProfileSelector
+            profiles={allProfiles}
+            loading={profilesLoading}
+            selected={selectedProfiles}
+            onToggle={toggleProfile}
           />
         </div>
 

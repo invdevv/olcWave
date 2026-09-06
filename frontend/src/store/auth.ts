@@ -32,7 +32,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     localStorage.removeItem('token')
     set({ token: null, username: '', isAuthenticated: false })
-    window.location.href = '/login'
+    window.location.href =
+      (import.meta.env.BASE_URL || '/').replace(/\/+$/, '') + '/login'
   },
 
   setToken: (token: string) => {

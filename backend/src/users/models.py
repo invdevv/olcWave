@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, DateTime, String, text
+from sqlalchemy import BigInteger, DateTime, JSON, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from datetime import datetime
@@ -18,3 +18,5 @@ class User(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # pyright: ignore[reportUninitializedInstanceVariable]
     traffic_limit_bytes: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
     traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+    # null = all profiles (legacy/unset); [] = none; [tags...] = exactly those
+    profiles: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)

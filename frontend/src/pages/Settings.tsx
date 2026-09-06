@@ -84,6 +84,7 @@ export default function Settings() {
   const [syncMode, setSyncMode] = useState('1h')
   const [customSync, setCustomSync] = useState('')
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
+  const [rotationMode, setRotationMode] = useState<'prod' | 'test'>('prod')
 
   useEffect(() => {
     if (!settings) return
@@ -100,6 +101,7 @@ export default function Settings() {
       setCustomSync(settings.sync_interval)
     }
     setLastSyncAt(settings.last_sync_at)
+    setRotationMode(settings.rotation_mode ?? 'prod')
   }, [settings])
 
   const saveMutation = useMutation({
@@ -131,7 +133,18 @@ export default function Settings() {
       traffic_collect_interval: parseInt(collectInterval, 10) || 10,
       sync_interval: effectiveSync || '1h',
       last_sync_at: lastSyncAt,
+      rotation_mode: rotationMode,
     })
+  }
+
+  // The rotation toggle applies instantly. Build the payload from the last-saved
+  // `settings` (not the editable fields) so flipping the switch never depends on -
+  // or accidentally commits - unsaved edits in the other cards.
+  const handleRotationChange = (value: string) => {
+    const mode: 'prod' | 'test' = value === 'test' ? 'test' : 'prod'
+    setRotationMode(mode)
+    if (!settings) return
+    saveMutation.mutate({ ...settings, rotation_mode: mode })
   }
 
   const handleSyncSelect = (value: string) => {
@@ -191,6 +204,29 @@ export default function Settings() {
               {t('saveSettings')}
             </Button>
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title={t('rotationTitle')} />
+        <div className="px-5 py-4 space-y-3">
+          <Select
+            label={t('rotationModeLabel')}
+            options={[
+              { value: 'prod', label: t('rotationModeProd') },
+              { value: 'test', label: t('rotationModeTest') },
+            ]}
+            value={rotationMode}
+            onChange={(e) => handleRotationChange(e.target.value)}
+            disabled={isLoading || saveMutation.isPending}
+          />
+          <p className="text-xs text-text-muted">{t('rotationHint')}</p>
+          {rotationMode === 'test' && (
+            <div className="flex items-center gap-2 bg-warning/10 border border-warning/20 rounded-lg px-3 py-2 text-xs text-warning">
+              <ExclamationTriangleIcon className="w-4 h-4 shrink-0" />
+              <span>{t('rotationTestWarn')}</span>
+            </div>
+          )}
         </div>
       </Card>
 

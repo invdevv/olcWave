@@ -59,13 +59,29 @@ export function validateYaml(yaml: string): YamlValidationResult {
   if (provider && provider !== 'none') {
     if (provider === 'telemost' || provider === 'wbstream') {
       const token = auth?.token as string | undefined
-      if (!token) {
+      const tokens = auth?.tokens as unknown[] | undefined
+      // A token is present via a single auth.token OR a non-empty auth.tokens list
+      // (multi-account rotation). A tokens entry may be a plain string, or a
+      // managed/self-refreshing object { token, account }. Either one lets the
+      // room be auto-generated.
+      const hasToken =
+        (typeof token === 'string' && token.trim() !== '') ||
+        (Array.isArray(tokens) &&
+          tokens.some(
+            (x) =>
+              (typeof x === 'string' && x.trim() !== '') ||
+              (!!x &&
+                typeof x === 'object' &&
+                typeof (x as { token?: unknown }).token === 'string' &&
+                (x as { token: string }).token.trim() !== ''),
+          ))
+      if (!hasToken) {
         if (!room?.id) {
-          addError(errors, 'room.id', 'Required when auth.provider is set and auth.token not set')
+          addError(errors, 'room.id', 'Required when auth.provider is set and no token(s) set')
         }
       } else {
         if (room?.id) {
-          addWarning(warnings, 'room.id', 'Generated automatically when auth.token is set')
+          addWarning(warnings, 'room.id', 'Generated automatically when a token is set')
         }
       }
     } else {

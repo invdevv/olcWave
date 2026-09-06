@@ -1,5 +1,8 @@
 import axios from 'axios'
 
+const LOGIN_PATH =
+  (import.meta.env.BASE_URL || '/').replace(/\/+$/, '') + '/login'
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
   headers: {
@@ -20,8 +23,8 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      if (window.location.pathname !== LOGIN_PATH) {
+        window.location.href = LOGIN_PATH
       }
     }
     return Promise.reject(error)

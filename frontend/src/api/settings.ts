@@ -7,6 +7,7 @@ export interface RuntimeSettings {
   traffic_collect_interval: number
   sync_interval: string
   last_sync_at: string | null
+  rotation_mode: 'prod' | 'test'
 }
 
 export const settingsApi = {

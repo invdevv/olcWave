@@ -43,10 +43,23 @@ class Profiles:
     async def update(tag: str, name: str, profile: str):
         profile = Profiles.validate(profile)
 
-        async with async_session_factory() as db:  
-            _= await ProfilesDB.update(db, tag, name, profile) 
+        async with async_session_factory() as db:
+            _= await ProfilesDB.update(db, tag, name, profile)
 
         await Containers.stop_all_by_config_tag(tag)
+
+    @staticmethod
+    async def save_no_restart(tag: str, name: str, profile: str):
+        """Persist a profile change WITHOUT stopping its containers.
+
+        Used by the rotator to prune confirmed-dead tokens from a profile while
+        the live srv keeps running (the tunnel must not drop for a config edit
+        the user did not make).
+        """
+        profile = Profiles.validate(profile)
+
+        async with async_session_factory() as db:
+            _ = await ProfilesDB.update(db, tag, name, profile)
 
     @staticmethod
     async def delete(tag: str):

@@ -681,6 +681,7 @@ class RoomRotator:
         dead = set(RoomGenerator._confirmed_dead)
         if not dead:
             return
+        pruned: set[str] = set()   # plain tokens actually removed from a profile
         for profile in profiles:
             cfg = RoomRotator._parse(profile.profile)
             auth = cfg.get("auth") or {}
@@ -702,6 +703,7 @@ class RoomRotator:
                 if isinstance(e, str):
                     if e.strip() in dead:
                         removed += 1
+                        pruned.add(e.strip())
                     else:
                         survivors.append(e)
                 else:
@@ -727,7 +729,12 @@ class RoomRotator:
                 RoomRotator._log(f"{profile.tag}: failed to prune dead tokens: {exc}")
         for t in dead:
             RoomGenerator._confirmed_dead.discard(t)
-            RoomGenerator._dead_tokens.pop(t, None)
+            # Forget the strike only for tokens that are gone from the config. A
+            # managed token stays in the profile and must keep its DEAD_TOKEN_TTL
+            # backoff, otherwise _active_tokens re-tries it on every tick until the
+            # vault refresh replaces it.
+            if t in pruned:
+                RoomGenerator._dead_tokens.pop(t, None)
 
     @staticmethod
     async def _refresh_managed_tokens(profiles) -> None:

@@ -34,6 +34,9 @@ services:
 
     environment:
       DOCKER_HOST: unix:///var/run/docker.sock
+      # token vault sidecar (see vault/); the secret comes from the compose project's .env
+      VAULT_URL: http://vault:8091
+      VAULT_SECRET: ${VAULT_SECRET:-}
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -44,6 +47,29 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  vault:
+    build:
+      context: ./vault
+      dockerfile: Dockerfile
+
+    image: olcwave-vault
+    container_name: olcwave-vault
+    restart: always
+    # tini reaps Chromium's exiting helper processes; without it they pile up as zombies
+    init: true
+
+    environment:
+      VAULT_SECRET: ${VAULT_SECRET:-}
+      PORT: "8091"
+      ACCOUNTS_DIR: /data/accounts
+
+    volumes:
+      # seeded browser sessions - each one is a live login to a Yandex account
+      - vault_data:/data
+
+    networks:
+      - app
 
   postgres:
     image: postgres:16-alpine
@@ -75,3 +101,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  vault_data:

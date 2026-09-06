@@ -341,6 +341,15 @@ write_frontend_env() {
   success "Wrote frontend/.env"
 }
   
+write_compose_env() {
+  # Shared secret between the api and the token vault sidecar (see vault/).
+  # docker compose reads this file for the ${VAULT_SECRET} interpolation.
+  may_overwrite ".env" || return 0
+  printf 'VAULT_SECRET=%s\n' "$(generate_secret)" > .env
+  chmod 600 .env
+  success "Wrote .env (VAULT_SECRET)"
+}
+
 write_caddyfile() {
   info "Generating caddy/Caddyfile..."
 
@@ -469,6 +478,7 @@ main() {
   collect_input
   write_backend_env
   write_frontend_env
+  write_compose_env
   write_caddyfile
   build_frontend
   build_subscription_page

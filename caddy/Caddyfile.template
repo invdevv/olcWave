@@ -3,6 +3,11 @@
         reverse_proxy api:8000
     }
 
+    # token vault: noVNC for the interactive login, embedded by the panel (see vault/)
+    handle_path /vault-vnc/* {
+        reverse_proxy vault:6080
+    }
+
     handle {
         root * /srv/frontend/dist
         try_files {path} /index.html

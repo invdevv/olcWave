@@ -1,14 +1,12 @@
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache \
-    ca-certificates \
-    bash wget unzip
+RUN apt-get -o Acquire::ForceIPv4=true update && \
+    apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends ca-certificates bash wget unzip && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-RUN wget -q https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
-
-RUN unzip Xray-linux-64.zip && rm Xray-linux-64.zip
+RUN wget -q https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip && \
+    unzip Xray-linux-64.zip && rm Xray-linux-64.zip
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

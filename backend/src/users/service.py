@@ -77,24 +77,15 @@ class Users:
         if not settings.RW_ENABLED:
             raise RuntimeError("Remnawave is not enabled")
 
-        from rw.sdk import getAllUsers, isUserValid
+        from rw.sdk import getAllUsers, isUserInSquad
 
         rw_users = await getAllUsers()
         db_users = await Users.get_all()
 
-        rw_users_sem = asyncio.Semaphore(20)
-        async def safe_is_valid(uuid):
-            async with rw_users_sem:
-                return await isUserValid(uuid)
-
-        valid_rw_users = await asyncio.gather(
-            *(safe_is_valid(u.short_uuid) for u in rw_users.users)
-        )
-
         rw_map = {
             u.short_uuid: u
-            for u, valid in zip(rw_users.users, valid_rw_users)
-            if valid
+            for u in rw_users.users
+            if isUserInSquad(u)
         }
 
         db_map = {u.short_uuid: u for u in db_users}

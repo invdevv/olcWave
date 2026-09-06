@@ -32,10 +32,12 @@ class OlcRTC:
         user_id: str,
         upstream_proxy_addr: str = "",
         upstream_proxy_user: str = "",
-        upstream_proxy_pass: str = ""
+        upstream_proxy_pass: str = "",
+        name: str | None = None,
     ):
         docker = docker_client.docker
-        name = f"olcwave-{config_tag}-{user_id}"
+        if name is None:
+            name = f"olcwave-{config_tag}-{user_id}"
 
         try:
             old = await docker.containers.get(name)
@@ -138,10 +140,19 @@ class OlcRTC:
         await container.delete(force=True)
 
     @staticmethod
-    async def logs(name: str) -> str:
+    async def rename(old_name: str, new_name: str):
+        docker = docker_client.docker
+        container = await docker.containers.get(old_name)
+        await container.rename(new_name)
+
+    @staticmethod
+    async def logs(name: str, tail: int | None = None) -> str:
         docker = docker_client.docker
         container = await docker.containers.get(name)
-        logs = await container.log(stdout=True, stderr=True)
+        kwargs = {"stdout": True, "stderr": True}
+        if tail is not None:
+            kwargs["tail"] = tail
+        logs = await container.log(**kwargs)
         return "".join(logs)
 
     @staticmethod

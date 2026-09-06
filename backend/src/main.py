@@ -15,6 +15,7 @@ from settings.service import SettingsService
 from settings.router import router as settings_router
 from auth.router import router as auth_router
 from profiles.router import router as configs_router
+from profiles.vault_router import router as vault_router
 from users.router import router as users_router
 from subscriptions.router import router as subscriptions_router
 from olcrtc.router import router as containers_router
@@ -23,6 +24,7 @@ from xraycore.sdk import XrayCore
 from config import settings
 from database import create_tables
 from traffic import TrafficManager
+from room_rotator import RoomRotator
 from rw_sync import SyncManager
 from docker_client import init_docker, close_docker
 
@@ -43,12 +45,19 @@ async def lifespan(app: FastAPI):
         SyncManager.start()
 
     traffic_task = asyncio.create_task(TrafficManager.run())
+    rotator_task = asyncio.create_task(RoomRotator.run())
 
     yield
 
     traffic_task.cancel()
     try:
         await traffic_task
+    except asyncio.CancelledError:
+        pass
+
+    rotator_task.cancel()
+    try:
+        await rotator_task
     except asyncio.CancelledError:
         pass
 
@@ -74,6 +83,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(configs_router)
+app.include_router(vault_router)
 app.include_router(users_router)
 app.include_router(subscriptions_router)
 app.include_router(containers_router)

@@ -59,6 +59,7 @@ class Containers:
         config: str,
         config_tag: str,
         short_uuid: str,
+        name: str | None = None,
     ) -> None:
         routing_socks_addr = ""
 
@@ -70,7 +71,12 @@ class Containers:
             config_tag=config_tag,
             user_id=short_uuid,
             upstream_proxy_addr=routing_socks_addr,
+            name=name,
         )
+
+    @staticmethod
+    async def rename(old_name: str, new_name: str) -> None:
+        await OlcRTC.rename(old_name, new_name)
 
     @staticmethod
     async def start(name: str) -> None:
@@ -99,8 +105,8 @@ class Containers:
         await OlcRTC.remove(name)
 
     @staticmethod
-    async def logs(name: str) -> ContainerLogsSchema:
-        logs = await OlcRTC.logs(name)
+    async def logs(name: str, tail: int | None = None) -> ContainerLogsSchema:
+        logs = await OlcRTC.logs(name, tail=tail)
 
         return ContainerLogsSchema(
             name=name,

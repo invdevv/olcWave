@@ -33,8 +33,6 @@ const translations = {
   tipHelp: 'Need help?',
   tipHelpText: 'Reach out to your service administrator for account-related questions and support.',
 
-  footerTagline: 'Secure connectivity, simplified.',
-
   iosTitle: 'iOS is not supported yet',
   iosDesc: 'OLCBox is currently available for Android and Desktop platforms. iOS support is planned for a future release.',
   iosButton: 'View setup instructions anyway',

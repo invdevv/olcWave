@@ -309,11 +309,58 @@ function Hero({ providerName }: { providerName: string | null }) {
 
 /* ─── Download Section ─── */
 
-const PLATFORMS = [
-  { key: 'android' as Platform, href: 'https://github.com/alananisimov/olcbox/releases/download/nightly/Olcbox-1.0.117-android-release.apk' },
-  { key: 'windows' as Platform, href: 'https://github.com/alananisimov/olcbox/releases/download/nightly/Olcbox-1.0.117-windows-amd64.exe' },
-  { key: 'linux' as Platform, href: 'https://github.com/alananisimov/olcbox/releases/download/nightly/Olcbox-1.0.117-linux-amd64.AppImage' },
+const RELEASE_PAGE = 'https://github.com/alananisimov/olcbox/releases/tag/nightly'
+const RELEASE_API = 'https://api.github.com/repos/alananisimov/olcbox/releases/tags/nightly'
+
+const PLATFORMS: { key: Platform }[] = [
+  { key: 'android' },
+  { key: 'windows' },
+  { key: 'linux' },
 ]
+
+type GitHubAsset = { name: string; browser_download_url: string }
+type GitHubRelease = { assets?: GitHubAsset[] }
+type DownloadUrls = Record<Platform, string>
+
+const FALLBACK_DOWNLOADS: DownloadUrls = {
+  android: RELEASE_PAGE,
+  windows: RELEASE_PAGE,
+  linux: RELEASE_PAGE,
+}
+
+const DOWNLOAD_CACHE_KEY = 'olcbox-nightly-downloads'
+const DOWNLOAD_CACHE_TTL = 6 * 60 * 60 * 1000
+
+async function getOlcboxDownloads(): Promise<DownloadUrls> {
+  try {
+    const cached = localStorage.getItem(DOWNLOAD_CACHE_KEY)
+    if (cached) {
+      const parsed = JSON.parse(cached) as { timestamp: number; urls: DownloadUrls }
+      if (Date.now() - parsed.timestamp < DOWNLOAD_CACHE_TTL) return parsed.urls
+    }
+
+    const response = await fetch(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } })
+    if (!response.ok) throw new Error(`GitHub API returned ${response.status}`)
+
+    const release: GitHubRelease = await response.json()
+    const assets = release.assets ?? []
+
+    const findAsset = (pattern: RegExp) =>
+      assets.find((a) => pattern.test(a.name))?.browser_download_url
+
+    const urls: DownloadUrls = {
+      android: findAsset(/android-release\.apk$/i) ?? findAsset(/android.*\.apk$/i) ?? RELEASE_PAGE,
+      windows: findAsset(/windows-amd64\.exe$/i) ?? findAsset(/windows.*\.exe$/i) ?? RELEASE_PAGE,
+      linux: findAsset(/linux-amd64\.appimage$/i) ?? findAsset(/linux.*\.appimage$/i) ?? RELEASE_PAGE,
+    }
+
+    localStorage.setItem(DOWNLOAD_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), urls }))
+    return urls
+  } catch (error) {
+    console.error('Failed to load OLCBox downloads:', error)
+    return FALLBACK_DOWNLOADS
+  }
+}
 
 const PLATFORM_ICONS: Record<Platform, ReactNode> = {
   android: <AndroidIcon className="w-5 h-5" />,
@@ -325,10 +372,15 @@ function DownloadSection() {
   const { t } = useLanguage()
   const detected = usePlatform()
   const [selected, setSelected] = useState<Platform>(detected ?? 'android')
+  const [downloadUrls, setDownloadUrls] = useState<DownloadUrls>(FALLBACK_DOWNLOADS)
 
   useEffect(() => { if (detected) setSelected(detected) }, [detected])
 
-  const current = PLATFORMS.find((p) => p.key === selected)!
+  useEffect(() => {
+    let cancelled = false
+    getOlcboxDownloads().then((urls) => { if (!cancelled) setDownloadUrls(urls) })
+    return () => { cancelled = true }
+  }, [])
 
   return (
     <Section title={t('downloadTitle')} icon={<ArrowDownTrayIcon className="w-4 h-4" />}>
@@ -357,7 +409,9 @@ function DownloadSection() {
           </div>
 
           <a
-            href={current.href}
+            href={downloadUrls[selected]}
+            target="_blank"
+            rel="noopener noreferrer"
             className="flex-1 h-11 flex items-center justify-center gap-2 rounded-lg font-medium text-sm
               bg-accent text-white shadow-soft hover:bg-accent-hover
               transition-all duration-150 no-underline active:scale-[0.98]"
